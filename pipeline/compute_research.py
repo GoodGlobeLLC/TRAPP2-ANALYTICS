@@ -27,11 +27,12 @@ from pathlib import Path
 # is missing (e.g. running locally).
 import math
 
-BOOKS = ["books/TRAPP2", "books/TRAPP2-1", "books/TRAPP2-2"]
+BOOKS = ["books/TRAPP2", "books/TRAPP2-1", "books/TRAPP2-2", "books/TRAPP2-3"]
 REPOS = [
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2/main/data/master.json",
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-1/main/data/master.json",
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-2/main/data/master.json",
+    "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-3/main/data/master.json",
 ]
 OUT = Path(__file__).resolve().parent.parent / "data" / "research_grades.json"
 
