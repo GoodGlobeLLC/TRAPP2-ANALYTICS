@@ -44,6 +44,8 @@ jobs:
         with: { repository: GoodGlobeLLC/TRAPP2-1, path: books/TRAPP2-1 }
       - uses: actions/checkout@v4
         with: { repository: GoodGlobeLLC/TRAPP2-2, path: books/TRAPP2-2 }
+      - uses: actions/checkout@v4
+        with: { repository: GoodGlobeLLC/TRAPP2-3, path: books/TRAPP2-3 }
 
       - uses: actions/setup-python@v5
         with:
