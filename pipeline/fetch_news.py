@@ -26,6 +26,7 @@ REPOS = [
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2/main/data/master.json",
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-1/main/data/master.json",
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-2/main/data/master.json",
+    "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-3/main/data/master.json",
 ]
 OUT = Path(__file__).resolve().parent.parent / "data" / "news" / "latest.json"
 PER_TICKER = 4
