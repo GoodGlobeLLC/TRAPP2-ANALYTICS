@@ -1,3 +1,18 @@
+# ============================================================
+#  >>> DESTINATION: GoodGlobeLLC/TRAPP2-ANALYTICS
+#  >>> FILE PATH:   .github/workflows/anayltics.yml
+#  >>> FULL PATH:   GoodGlobeLLC/TRAPP2-ANALYTICS/.github/workflows/anayltics.yml
+#
+#  Edit/paste directly on GitHub here:
+#  https://github.com/GoodGlobeLLC/TRAPP2-ANALYTICS/edit/main/.github/workflows/anayltics.yml
+#
+#  WHAT CHANGED IN THIS FILE:
+#    Push logic changed from `git pull --rebase -X ours` to `git fetch` +
+#    `git merge -X ours` (cleaner, never leaves unmerged files). NOTE:
+#    filename keeps the existing 'anayltics' spelling so it overwrites
+#    the live file rather than creating a duplicate.
+# ============================================================
+
 # .github/workflows/analytics.yml  →  goes in the NEW TRAPP2-ANALYTICS repo
 #
 # The analytics backend: computes research grades (the Research tab's 23
@@ -70,4 +85,11 @@ jobs:
           git add -A data/
           git diff --staged --quiet && echo "No changes" && exit 0
           git commit -m "analytics: $(date -u +%Y-%m-%dT%H:%MZ)"
-          for i in 1 2 3; do git push && break; git pull --rebase -X ours || true; sleep 3; done
+          # Conflict-proof push (fetch + merge -X ours, latest run wins). Avoids
+          # the rebase-conflict / unmerged-files failure on regenerated JSON.
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main 2>/dev/null || git push; then echo "Pushed (attempt $i)"; break; fi
+            git fetch origin "${GITHUB_REF_NAME:-main}" || git fetch origin main
+            git merge -X ours --no-edit "origin/${GITHUB_REF_NAME:-main}" 2>/dev/null || git merge -X ours --no-edit origin/main 2>/dev/null || git merge --abort 2>/dev/null || true
+            sleep $((i * 2))
+          done
