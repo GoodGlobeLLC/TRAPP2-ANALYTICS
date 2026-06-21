@@ -29,8 +29,8 @@ import sys
 import urllib.request
 import urllib.error
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://jmcczdgbnadkycnyisvh.supabase.co").rstrip("/")
-SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptY2N6ZGdibmFka3ljbnlpc3ZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NTQ1MDEsImV4cCI6MjA5NzUzMDUwMX0.RxoxaeXaz1LXBhzl2Q0WZQaFjgkJ8v0JUiedY_Wocfs")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 REGIME_BASE_URL = os.environ.get("REGIME_BASE_URL", "").rstrip("/")
 TRAPP2_1_RAW = "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-1/main/data"
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
