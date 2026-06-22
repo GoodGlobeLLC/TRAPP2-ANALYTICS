@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 """
-fetch_news.py — APPEND-ONLY news archive for TRAPP2-ANALYTICS.
+fetch_news.py — backend news puller for TRAPP2-ANALYTICS.
 
 Pulls recent news per ticker via yfinance (free, keyless) for every ticker in
-the master.json files, and ARCHIVES everything permanently. Nothing is ever
-deleted: each run merges new articles into a monthly shard, keeping every
-article ever seen so you can study price behavior since each headline.
+the master.json files and writes one compact corpus:
 
-Outputs (all under data/news/):
-    archive/YYYY-MM.json      — monthly shards, append-only. Each article:
-        { id, url, headline, summary, ticker, source, datetime,
-          firstSeenAt,          # when WE first archived it (ISO, UTC)
-          priceAtFirstSeen,     # ticker price captured when first archived
-          priceAtFirstSeenAt }  # exact time that price was captured (ISO, UTC)
-    latest.json               — the most recent ~2500 across all shards, the
-                                lean file the frontend loads by default (same
-                                shape as before, so nothing downstream breaks).
-    index.json                — { months: [...], totalArticles, generatedAt }
+    data/news/latest.json
+      { generatedAt, count, items: [ {url, headline, summary, ticker,
+                                      source, datetime, _fetchedByTicker,
+                                      _tickerConfident} ] }
 
-Why monthly shards: "never delete" means unbounded growth. Sharding by
-publish-month keeps each file small, lets the frontend lazy-load only the
-months it needs, and means a refresh only rewrites the CURRENT month's shard +
-latest.json — old shards are never refetched or rewritten (exactly the
-"new refreshes push with old ones, old ones just stored" behavior).
+TICKER ATTRIBUTION (the important part):
+yfinance's per-ticker news endpoint returns a mix of (a) news genuinely about
+the ticker and (b) general market/macro news that Yahoo merely surfaces on that
+ticker's page. The old version tagged EVERYTHING with the ticker it was fetched
+under, so popular names (esp. NVDA, first popular symbol scanned) collected a
+pile of Fed/crypto/SpaceX articles mis-labeled NVDA.
+
+Now an article keeps its fetched ticker ONLY when we're confident it's about it:
+  1. yfinance lists the ticker in the article's related/stock tickers, OR
+  2. the symbol appears as a standalone token in the headline/summary, OR
+  3. a distinctive company-name token (e.g. "Nvidia", "Tesla") appears.
+Otherwise the ticker is left BLANK ("") and the frontend routes the article to
+the review queue for a human to assign — no more silent NVDA defaulting.
 """
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -39,77 +40,100 @@ REPOS = [
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-2/main/data/master.json",
     "https://raw.githubusercontent.com/GoodGlobeLLC/TRAPP2-3/main/data/master.json",
 ]
-DATA = Path(__file__).resolve().parent.parent / "data" / "news"
-ARCHIVE_DIR = DATA / "archive"
-LATEST = DATA / "latest.json"
-INDEX = DATA / "index.json"
-PER_TICKER = 6
+OUT = Path(__file__).resolve().parent.parent / "data" / "news" / "latest.json"
+PER_TICKER = 4
+GLOBAL_CAP = 2500
 SLEEP = 0.12
-LATEST_CAP = 2500
+
+# Common corporate-suffix / filler tokens that aren't distinctive enough to
+# attribute an article to a company on their own.
+_STOP = {
+    "INC", "CORP", "CORPORATION", "CO", "COMPANY", "LTD", "LIMITED", "PLC",
+    "HOLDINGS", "HOLDING", "GROUP", "CLASS", "COMMON", "STOCK", "SHARES",
+    "ETF", "FUND", "TRUST", "ISHARES", "SPDR", "VANGUARD", "INDEX", "THE",
+    "AND", "OF", "FOR", "MSCI", "ULTRA", "PROSHARES", "TECHNOLOGIES",
+    "TECHNOLOGY", "INTERNATIONAL", "AMERICAN", "GLOBAL", "SYSTEMS",
+    "SERVICES", "PARTNERS", "ADR", "NV", "SA", "AG", "REIT",
+}
 
 
-def _get(url, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": "ValuatioAnalytics"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
-
-
-def master_rows(url):
-    try:
-        d = _get(url)
-        rows = d if isinstance(d, list) else (d.get("rows") or list(d.values()))
-        if isinstance(rows, dict):
-            rows = list(rows.values())
-        return rows
-    except Exception as e:
-        print(f"  x {url.split('/')[4]}: {e}", file=sys.stderr)
+def _name_tokens(name):
+    """Distinctive uppercase tokens from a company name for loose matching."""
+    if not name:
         return []
+    toks = re.findall(r"[A-Za-z][A-Za-z&\.]{2,}", name.upper())
+    out = []
+    for t in toks:
+        t = t.replace(".", "").replace("&", "")
+        if len(t) >= 4 and t not in _STOP:
+            out.append(t)
+    return out[:3]  # first few distinctive words are enough
 
 
-def shard_path(dt_iso):
-    """Monthly shard path for an article's publish datetime (UTC)."""
-    month = (dt_iso or "")[:7] or datetime.now(timezone.utc).strftime("%Y-%m")
-    return ARCHIVE_DIR / f"{month}.json", month
-
-
-def load_shard(path):
-    if path.exists():
+def load_universe():
+    """Return (ordered_tickers, {ticker: [name_tokens]})."""
+    tickers, seen, names = [], set(), {}
+    for url in REPOS:
         try:
-            return json.loads(path.read_text())
-        except Exception:
-            return {"articles": []}
-    return {"articles": []}
-
-
-def main():
-    # 1. Collect tickers + a price map (current price per ticker) so we can stamp
-    #    each newly-archived article with the price at the moment we saw it.
-    tickers, seen, price_map = [], set(), {}
-    for u in REPOS:
-        for row in master_rows(u):
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ValuatioAnalytics"}), timeout=30) as r:
+                d = json.load(r)
+            rows = d if isinstance(d, list) else (d.get("rows") or list(d.values()))
+            if isinstance(rows, dict):
+                rows = list(rows.values())
+        except Exception as e:
+            print(f"  ✗ {url.split('/')[4]}: {e}", file=sys.stderr)
+            continue
+        for row in rows:
             t = (row.get("ticker") or "").upper()
             if not t or t in seen:
                 continue
             seen.add(t)
             tickers.append(t)
-            # current price + the backend's own fetch time for it
-            px = row.get("price") or row.get("fmpprice") or row.get("last price")
-            try:
-                px = float(px) if px not in (None, "") else None
-            except Exception:
-                px = None
-            price_map[t] = {
-                "price": px,
-                "pricedAt": row.get("fetched_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            }
-    print(f"Pulling news for {len(tickers)} tickers ...")
+            names[t] = _name_tokens(row.get("name") or row.get("Name") or "")
+    return tickers, names
 
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    # 2. Pull fresh articles. Group new ones by their month shard.
-    new_by_month = {}          # month -> { url -> article }
-    have_global = set()        # de-dup within this run
-    pulled = 0
+def _related_tickers(c, n):
+    """Best-effort extraction of tickers yfinance associates with an article."""
+    out = set()
+    for src in (c, n):
+        if not isinstance(src, dict):
+            continue
+        # Newer shapes nest under finance/stockTickers; older used relatedTickers.
+        rel = src.get("relatedTickers")
+        if isinstance(rel, list):
+            out.update(str(x).upper() for x in rel if x)
+        fin = src.get("finance") or {}
+        st = fin.get("stockTickers") if isinstance(fin, dict) else None
+        if isinstance(st, list):
+            for x in st:
+                sym = (x.get("symbol") if isinstance(x, dict) else x)
+                if sym:
+                    out.add(str(sym).upper())
+    return out
+
+
+def _is_about(ticker, name_toks, text, related):
+    """True if we're confident the article is about `ticker`."""
+    if related:
+        return ticker in related          # explicit association wins
+    U = text.upper()
+    # Standalone symbol mention (word-boundary so "AI" doesn't match "SAID").
+    if re.search(r"(?<![A-Z])" + re.escape(ticker) + r"(?![A-Z])", U):
+        return True
+    # Distinctive company-name token mention.
+    for tok in (name_toks or []):
+        if re.search(r"(?<![A-Z])" + re.escape(tok) + r"(?![A-Z])", U):
+            return True
+    return False
+
+
+def main():
+    tickers, names = load_universe()
+    print(f"Pulling news for {len(tickers)} tickers …")
+
+    items, have_urls = [], set()
+    confident_n = 0
     for i, t in enumerate(tickers, 1):
         try:
             raw = yf.Ticker(t).news or []
@@ -119,88 +143,46 @@ def main():
             c = n.get("content") or n
             url = (c.get("canonicalUrl") or {}).get("url") or c.get("link") or n.get("link")
             title = c.get("title") or n.get("title")
-            if not url or not title or url in have_global:
+            if not url or not title or url in have_urls:
                 continue
-            have_global.add(url)
+            have_urls.add(url)
+            summary = (c.get("summary") or c.get("description") or "")[:400]
+            related = _related_tickers(c, n)
+            confident = _is_about(t, names.get(t), f"{title} {summary}", related)
+            if confident:
+                confident_n += 1
             ts = c.get("pubDate") or n.get("providerPublishTime")
             if isinstance(ts, (int, float)):
                 ts = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
-            ts = ts or now_iso
-            pm = price_map.get(t, {})
-            art = {
-                "id": url,
-                "url": url,
-                "headline": title,
-                "summary": (c.get("summary") or c.get("description") or "")[:400],
-                "ticker": t,
+            items.append({
+                "url": url, "headline": title, "summary": summary,
+                # Confident → keep the ticker. Not confident → BLANK so the
+                # frontend sends it to review instead of mis-attributing it.
+                "ticker": t if confident else "",
                 "source": ((c.get("provider") or {}).get("displayName")
                            or n.get("publisher") or "Yahoo"),
                 "datetime": ts,
-                # archive provenance + price-at-first-seen (used by the frontend
-                # to show "return since the article came out")
-                "firstSeenAt": now_iso,
-                "priceAtFirstSeen": pm.get("price"),
-                "priceAtFirstSeenAt": pm.get("pricedAt"),
-            }
-            _, month = shard_path(ts)
-            new_by_month.setdefault(month, {})[url] = art
-            pulled += 1
+                "_fetchedByTicker": True,
+                "_tickerConfident": confident,
+                # Keep the fetch-origin so the frontend can SUGGEST it in review
+                # without treating it as confirmed.
+                "_suggestedTicker": t,
+            })
         if i % 50 == 0:
-            print(f"  ... {i}/{len(tickers)} - {pulled} candidate articles")
+            print(f"  … {i}/{len(tickers)} · {len(items)} articles ({confident_n} confident)")
         time.sleep(SLEEP)
+        if len(items) >= GLOBAL_CAP:
+            print("  global cap reached")
+            break
 
-    # 3. Merge into each affected monthly shard (APPEND-ONLY: existing articles
-    #    are NEVER overwritten or dropped; only genuinely-new URLs are added).
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    touched_months, added_total = [], 0
-    for month, new_arts in new_by_month.items():
-        path = ARCHIVE_DIR / f"{month}.json"
-        shard = load_shard(path)
-        existing = {a.get("url"): a for a in shard.get("articles", [])}
-        added = 0
-        for url, art in new_arts.items():
-            if url not in existing:          # never re-add / never overwrite
-                existing[url] = art
-                added += 1
-        if added:
-            merged = sorted(existing.values(), key=lambda a: a.get("datetime") or "", reverse=True)
-            path.write_text(json.dumps({
-                "month": month,
-                "count": len(merged),
-                "updatedAt": now_iso,
-                "articles": merged,
-            }, separators=(",", ":")))
-            touched_months.append(month)
-            added_total += added
-            print(f"  + {month}: +{added} new (now {len(merged)} archived)")
-
-    # 4. Rebuild latest.json from the newest shards (lean file the app loads).
-    all_months = sorted([p.stem for p in ARCHIVE_DIR.glob("*.json")], reverse=True)
-    latest_items, total = [], 0
-    for m in all_months:
-        shard = load_shard(ARCHIVE_DIR / f"{m}.json")
-        arts = shard.get("articles", [])
-        total += len(arts)
-        for a in arts:
-            if len(latest_items) < LATEST_CAP:
-                latest_items.append(a)
-    LATEST.write_text(json.dumps({
-        "generatedAt": now_iso,
-        "count": len(latest_items),
-        "items": latest_items,
+    items.sort(key=lambda a: a.get("datetime") or "", reverse=True)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps({
+        "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": len(items), "items": items,
     }, separators=(",", ":")))
-
-    # 5. Index of all months for the frontend's lazy-loader.
-    INDEX.write_text(json.dumps({
-        "generatedAt": now_iso,
-        "months": all_months,
-        "totalArticles": total,
-        "latestCount": len(latest_items),
-    }, separators=(",", ":")))
-
-    print(f"OK archive: +{added_total} new this run across {len(touched_months)} month(s); "
-          f"{total} total archived across {len(all_months)} month(s).")
-    print(f"OK latest.json: {len(latest_items)} most-recent articles.")
+    blank = len(items) - confident_n
+    print(f"✓ news/latest.json: {len(items)} articles · {confident_n} confidently tagged · {blank} → review (blank ticker)")
     return 0
 
 
