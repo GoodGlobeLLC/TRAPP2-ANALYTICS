@@ -5,7 +5,7 @@ name: Push portfolio → Supabase
 
 on:
   push:
-    paths: [ 'data/portfolio_data.json' ]
+    paths: [ 'data/research_grades.json' ]
   schedule:
     - cron: '15 * * * *'        # hourly at :15
   workflow_dispatch:
