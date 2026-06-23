@@ -1,6 +1,6 @@
-name: Push portfolio → Supabase
+name: Push Analytics → Supabase
 
-# Mirrors data/portfolio_data.json into Supabase on a schedule + whenever the
+# Mirrors data/reasearch_grades.json into Supabase on a schedule + whenever the
 # file changes. Runs server-side — no app needed. Uses the service_role key.
 
 on:
@@ -21,4 +21,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python3 scripts/sync_port_to_supabase.py
+        run: python3 scripts/sync_analytics_to_supabase.py
