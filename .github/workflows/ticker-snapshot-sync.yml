@@ -5,7 +5,7 @@ name: ticker-snapshot-sync
 # fast with SQL. GitHub stays the source of truth; this is a read projection.
 #
 # Put this file in TRAPP2-ANALYTICS/.github/workflows/ (the natural home, since
-# grades already live there) along with scripts/sync_ticker_snapshot.py.
+# grades already live there) along with pipeline/sync_ticker_snapshot.py.
 #
 # Requires two repo secrets (you already have these set in your repos):
 #   SUPABASE_URL            https://xxxx.supabase.co  (the project holding the table)
@@ -43,4 +43,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python3 pipeline/sync_ticker_snapshot.py
