@@ -45,6 +45,31 @@ TABLE = "ticker_snapshot"
 BATCH = 200  # rows per upsert request
 
 
+from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+except Exception:
+    _ET = None
+
+
+def _eastern_now():
+    if _ET is not None:
+        return datetime.now(_ET)
+    u = datetime.now(timezone.utc); y = u.year
+    def nth_sunday(month, n):
+        d = datetime(y, month, 1, tzinfo=timezone.utc)
+        return 1 + ((6 - d.weekday()) % 7) + (n - 1) * 7
+    start = datetime(y, 3, nth_sunday(3, 2), 7, tzinfo=timezone.utc)
+    end = datetime(y, 11, nth_sunday(11, 1), 6, tzinfo=timezone.utc)
+    return u + timedelta(hours=(-4 if start <= u < end else -5))
+
+
+def now_iso():
+    """Eastern wall-clock tagged +00:00 so Supabase's UTC display shows local time."""
+    return _eastern_now().replace(tzinfo=timezone.utc).isoformat()
+
+
 def _num(v):
     """Coerce to float or None — master.json mixes strings and numbers."""
     if v is None or v == "":
@@ -132,6 +157,7 @@ def build_rows(master, grades, signals):
         ranks = g.get("ranks") if isinstance(g.get("ranks"), dict) else None
         row = {
             "ticker": t,
+            "updated_at": now_iso(),
             "name": m.get("name") or g.get("name"),
             "sector": m.get("sector") or g.get("sector") or None,
             "industry": m.get("industry") or None,
